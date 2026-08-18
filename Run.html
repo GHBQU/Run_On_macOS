@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>macOS 运行对话框</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", SimSun, sans-serif;
+        }
+        body {
+            background: transparent;
+        }
+        .run-dialog {
+            width: 400px;
+            background: #efefef;
+            border: 1px solid #888888;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.25);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .dialog-title-bar {
+            background: #efefef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+        }
+        .title-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+        }
+        .close-btn {
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: #efefef;
+            font-size: 18px;
+            cursor: pointer;
+        }
+        .dialog-body {
+            padding: 16px 20px;
+        }
+        .desc-text {
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 18px;
+        }
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .label-text {
+            font-size: 15px;
+        }
+        .input-wrap {
+            position: relative;
+            flex: 1;
+        }
+        #run-input {
+            width: 100%;
+            height: 32px;
+            border: 1px solid #999;
+            padding: 0 28px 0 6px;
+            font-size: 14px;
+        }
+        #history-btn {
+            position: absolute;
+            right: 1px;
+            top: 1px;
+            width: 26px;
+            height: 30px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        #history-btn:hover {
+            background: #ddd;
+        }
+        #history-btn::after {
+            content: "";
+            display: block;
+            width: 0;
+            height: 0;
+            margin: 12px auto 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #666;
+        }
+        .history-pop {
+            position: fixed;
+            z-index: 100;
+            min-width: 260px;
+            max-width: 360px;
+            max-height: 72px;
+            overflow-y: auto;
+            background: #fdfdfd;
+            border: 1px solid #999;
+            box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+            font-size: 13px;
+        }
+        .history-item {
+            padding: 7px 10px;
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .history-item:hover {
+            background: #dce6f2;
+        }
+        .history-empty {
+            padding: 10px;
+            color: #888;
+        }
+        .hidden {
+            display: none !important;
+        }
+        .button-bar {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            padding: 10px 16px;
+            background: #e8e8e8;
+        }
+        .dialog-btn {
+            width: 100px;
+            height: 34px;
+            font-size: 14px;
+            border: 1px solid #777;
+            background: #eeeeee;
+        }
+    </style>
+</head>
+<body>
+    <div class="run-dialog">
+        <div class="dialog-title-bar">
+            <div class="title-left">
+                <span>🖥️</span>
+                <span>运行</span>
+            </div>
+            <button class="close-btn">×</button>
+        </div>
+        <div class="dialog-body">
+            <p class="desc-text">macOS 将根据你所输入的名称，为你打开相应的程序、文件夹、文档或 Internet 资源。</p>
+            <div class="input-row">
+                <span class="label-text">打开(O):</span>
+                <div class="input-wrap">
+                    <input id="run-input" type="text" autocomplete="off">
+                    <button id="history-btn" type="button" title="历史记录"></button>
+                </div>
+            </div>
+            <div id="history-pop" class="history-pop hidden"></div>
+        </div>
+        <div class="button-bar">
+            <button class="dialog-btn">确定</button>
+            <button class="dialog-btn">取消</button>
+            <button class="dialog-btn">浏览(B)...</button>
+        </div>
+    </div>
+    <script>
+        (function () {
+            // 页面加载完成前 Swift 预填的"上次运行"内容（setLastRun 尚不存在时走这里）
+            if (window.__pendingLastRun !== undefined) {
+                var _p = document.getElementById('run-input');
+                if (_p) {
+                    _p.value = window.__pendingLastRun;
+                    window.__pendingLastRun = undefined;
+                }
+            }
+            function post(type, value) {
+                try {
+                    window.webkit.messageHandlers.runBridge.postMessage({ type: type, value: value || '' });
+                } catch (e) {}
+            }
+
+            // ---- 历史记录下拉 ----
+            var historyOpen = false;
+            var pendingLastRun = null;
+            function closeHistory() {
+                historyOpen = false;
+                var pop = document.getElementById('history-pop');
+                if (pop) pop.classList.add('hidden');
+            }
+            function openHistory() {
+                historyOpen = true;
+                post('getHistory'); // Swift 通过 window.setHistory 回填
+            }
+            window.closeHistory = closeHistory;
+            // 打开对话框时填入上次成功运行的内容并全选（页面未加载完时先暂存）
+            window.setLastRun = function (v) {
+                var input = document.getElementById('run-input');
+                if (input) {
+                    input.value = v;
+                    input.focus();
+                    input.select();
+                } else {
+                    pendingLastRun = v;
+                }
+            };
+            window.setHistory = function (items) {
+                var pop = document.getElementById('history-pop');
+                var input = document.getElementById('run-input');
+                if (!pop || !input || !historyOpen) return;
+                pop.innerHTML = '';
+                if (!items || !items.length) {
+                    var d = document.createElement('div');
+                    d.className = 'history-empty';
+                    d.textContent = '暂无历史记录';
+                    pop.appendChild(d);
+                } else {
+                    items.forEach(function (cmd) {
+                        var d = document.createElement('div');
+                        d.className = 'history-item';
+                        d.textContent = cmd;
+                        d.title = cmd;
+                        d.addEventListener('click', function () {
+                            input.value = cmd;
+                            closeHistory();
+                            input.focus();
+                        });
+                        pop.appendChild(d);
+                    });
+                }
+                var rect = input.getBoundingClientRect();
+                pop.style.left = rect.left + 'px';
+                pop.style.top = (rect.bottom + 4) + 'px';
+                pop.style.width = rect.width + 'px';
+                pop.classList.remove('hidden');
+            };
+
+            function onReady() {
+                var input = document.getElementById('run-input');
+                if (pendingLastRun !== null) {
+                    input.value = pendingLastRun;
+                    pendingLastRun = null;
+                    input.focus();
+                    input.select();
+                }
+                var btns = Array.prototype.slice.call(document.querySelectorAll('.dialog-btn'));
+                function findBtn(text) {
+                    return btns.filter(function (b) { return b.textContent.indexOf(text) !== -1; })[0];
+                }
+                var okBtn = findBtn('确定');
+                var cancelBtn = findBtn('取消');
+                var browseBtn = findBtn('浏览');
+                document.querySelector('.close-btn').addEventListener('click', function () { post('close'); });
+                if (okBtn) okBtn.addEventListener('click', function () { post('run', input.value); });
+                if (cancelBtn) cancelBtn.addEventListener('click', function () { post('cancel'); });
+                if (browseBtn) browseBtn.addEventListener('click', function () { post('browse'); });
+
+                var hb = document.getElementById('history-btn');
+                if (hb) hb.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (historyOpen) { closeHistory(); } else { openHistory(); }
+                });
+                document.addEventListener('click', function (e) {
+                    var pop = document.getElementById('history-pop');
+                    if (historyOpen && pop && !pop.contains(e.target) && e.target !== hb) closeHistory();
+                });
+
+                input.addEventListener('keydown', function (e) {
+                    if (e.key === 'Enter') {
+                        if (historyOpen) closeHistory();
+                        post('run', input.value);
+                    } else if (e.key === 'Escape' && historyOpen) {
+                        closeHistory();
+                        e.stopPropagation();
+                    }
+                });
+                input.focus();
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', onReady);
+            } else {
+                onReady();
+            }
+            window.setInputValue = function (v) {
+                var input = document.getElementById('run-input');
+                if (input) { input.value = v; input.focus(); }
+            };
+        })();
+    </script>
+</body>
+</html>
